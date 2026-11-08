@@ -23,8 +23,10 @@
   --fill: rgba(118, 118, 128, 0.14);
   --tag: #ffd60a;
   --tag-ink: #1c1c1e;
-  --sale: #1c1c1e;
-  --sale-ink: #ffd60a;
+  --rent: #1d6fe0;
+  --rent-ink: #ffffff;
+  --sale: #e0352b;
+  --sale-ink: #ffffff;
   --me: #0a84ff;
   --shadow: 0 8px 30px rgba(0, 0, 0, 0.16);
   --f-ui: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", "Segoe UI", Roboto, sans-serif;
@@ -121,26 +123,30 @@ button:focus-visible { outline: 3px solid var(--me); outline-offset: 2px; }
 .maplibregl-popup { position: absolute; top: 0; left: 0; display: flex; will-change: transform; pointer-events: none; }
 .maplibregl-popup-content { position: relative; background: #fff; pointer-events: auto; }
 
+/* Dragging the car in the demo */
+.dragging .me { transform: scale(1.25); filter: drop-shadow(0 6px 10px rgba(0,0,0,.35)); }
+.maplibregl-marker[draggable], .maplibregl-marker.dragging { cursor: grab; }
+
 /* Listing tags */
 .tag {
   width: max-content; max-width: 70vw;
   white-space: nowrap; cursor: pointer;
   font: 700 13px var(--f-ui); font-variant-numeric: tabular-nums; letter-spacing: -0.01em;
   padding: 5px 9px 5px 6px; border-radius: 10px;
-  background: var(--tag); color: var(--tag-ink);
+  background: var(--rent); color: var(--rent-ink);
   box-shadow: 0 2px 8px rgba(0,0,0,.25);
   display: flex; align-items: center; gap: 6px; position: relative; margin-bottom: 7px;
 }
 .tag::after {
   content: ""; position: absolute; left: 50%; bottom: -6px; transform: translateX(-50%);
-  border: 6px solid transparent; border-bottom: 0; border-top-color: var(--tag);
+  border: 6px solid transparent; border-bottom: 0; border-top-color: var(--rent);
 }
-.tag .k { font: 800 10px var(--f-ui); background: var(--tag-ink); color: var(--tag); border-radius: 5px; padding: 2px 4px; }
-.tag .m { font-weight: 500; opacity: .75; }
+.tag .k { font: 800 10px var(--f-ui); background: var(--rent-ink); color: var(--rent); border-radius: 5px; padding: 2px 4px; }
+.tag .m { font-weight: 500; opacity: .85; }
 .tag.sale { background: var(--sale); color: var(--sale-ink); }
 .tag.sale::after { border-top-color: var(--sale); }
 .tag.sale .k { background: var(--sale-ink); color: var(--sale); }
-.tag.near { outline: 3px solid var(--me); }
+.tag.near { box-shadow: 0 0 0 3px #fff, 0 0 0 5px #1c1c1e, 0 2px 8px rgba(0,0,0,.25); }
 
 /* My position */
 .me { width: 46px; height: 46px; position: relative; }
@@ -217,7 +223,7 @@ button:focus-visible { outline: 3px solid var(--me); outline-offset: 2px; }
 <div class="start" id="start">
   <div class="card">
     <h1>İlan Radarı</h1>
-    <p>Etrafındaki ilanlar haritada sarı etiketlerle görünür. Bir ilana yaklaşınca telefon sesli söyler.</p>
+    <p>Etrafındaki ilanlar haritada etiketlerle (mavi kiralık, kırmızı satılık) görünür. Bir ilana yaklaşınca telefon sesli söyler.</p>
     <div class="sample-tags">
       <div class="tag"><span class="k">K</span>20k · 1+1 <span class="m">· 65 m²</span></div>
       <div class="tag sale"><span class="k">S</span>4,2M · 2+1 <span class="m">· 110 m²</span></div>
@@ -805,11 +811,12 @@ button:focus-visible { outline: 3px solid var(--me); outline-offset: 2px; }
     return { p: [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t], hdg: bearing(a, b) };
   }
 
-  function fetchRoute(center) {
+  function fetchRoute(center, start) {
     // Waypoints on a ring around the centre; the routing service snaps them to roads.
+    // With a start point (the car was dragged there) the tour begins and ends at that point.
     var wps = [];
     for (var k = 0; k < 6; k++) wps.push(offset(center, DEMO_RADIUS, k * 60));
-    wps.push(wps[0]);
+    if (start) { wps.unshift(start); wps.push(start); } else wps.push(wps[0]);
     var q = wps.map(function (p) { return p[1].toFixed(6) + "," + p[0].toFixed(6); }).join(";");
     var url = "https://router.project-osrm.org/route/v1/driving/" + q + "?overview=full&geometries=geojson";
     return fetch(url).then(function (r) { if (!r.ok) throw new Error("rota"); return r.json(); })
@@ -877,6 +884,7 @@ button:focus-visible { outline: 3px solid var(--me); outline-offset: 2px; }
     b.setAttribute("aria-pressed", on ? "true" : "false");
     b.textContent = on ? "Demoyu durdur" : "Demo";
     clearInterval(demoTimer);
+    meMarker.setDraggable(on);
     if (!on) { hideRouteLine(); render(); return; }
 
     follow = true; announced = {};
@@ -888,7 +896,7 @@ button:focus-visible { outline: 3px solid var(--me); outline-offset: 2px; }
       demoTimer = setInterval(demoStep, 500);
       demoStep();
     }
-    if (demoRoute && demoRoute.center === center) { go(); return; }
+    if (demoRoute && demoRoute.center === center) { go(); hintDrag(); return; }
     b.textContent = "Rota hazırlanıyor…";
     fetchRoute(center).then(function (r) { demoRoute = r; })
       .catch(function () {
@@ -899,9 +907,44 @@ button:focus-visible { outline: 3px solid var(--me); outline-offset: 2px; }
         if (!demoOn) return;
         b.textContent = "Demoyu durdur";
         go();
+        hintDrag();
       });
     render();
   }
+
+  // ---------- demo: drag the car (or dot) to another street ----------
+  var dragHinted = false;
+  function hintDrag() {
+    if (dragHinted) return;
+    dragHinted = true;
+    toast("İpucu: Arabayı basılı tutup başka bir sokağa sürükleyebilirsin.");
+  }
+  function moveDemoTo(p) {
+    var b = document.getElementById("demo");
+    b.textContent = "Rota hazırlanıyor…";
+    var center = offset(p, DEMO_RADIUS * 0.8, (heading || 0));   // tour the streets just ahead of the new spot
+    fetchRoute(center, p).then(function (r) { demoRoute = r; })
+      .catch(function () { demoRoute = circleRoute(p); })
+      .then(function () {
+        if (!demoOn) return;
+        b.textContent = "Demoyu durdur";
+        follow = true; announced = {};
+        clearInterval(demoTimer);
+        demoS = 0;
+        placeSamplesOnRoute();
+        drawRouteLine();
+        demoTimer = setInterval(demoStep, 500);
+        demoStep();
+      });
+  }
+  meMarker.on("dragstart", function () { clearInterval(demoTimer); meOuter.classList.add("dragging"); });
+  meMarker.on("dragend", function () {
+    meOuter.classList.remove("dragging");
+    if (!demoOn) return;
+    var q = meMarker.getLngLat();
+    me = [q.lat, q.lng];
+    moveDemoTo([q.lat, q.lng]);
+  });
 
   // ---------- screen stays on ----------
   function keepAwake() {
