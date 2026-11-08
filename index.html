@@ -1,0 +1,811 @@
+<!doctype html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="İlan Radarı">
+<title>İlan Radarı</title>
+<link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css">
+<style>
+/* Layout: full-bleed vector map, frosted top bar and bottom dock in the style of iOS Maps */
+:root {
+  --land: #f6f3ee;
+  --panel: rgba(250, 250, 248, 0.82);
+  --panel-solid: #fbfbf9;
+  --fg: #1c1c1e;
+  --muted: #6e6e73;
+  --line: rgba(60, 60, 67, 0.16);
+  --fill: rgba(118, 118, 128, 0.14);
+  --tag: #ffd60a;
+  --tag-ink: #1c1c1e;
+  --sale: #1c1c1e;
+  --sale-ink: #ffd60a;
+  --me: #0a84ff;
+  --shadow: 0 8px 30px rgba(0, 0, 0, 0.16);
+  --f-ui: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", "Segoe UI", Roboto, sans-serif;
+  color-scheme: light;
+}
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+html, body { height: 100%; margin: 0; }
+body {
+  background: var(--land); color: var(--fg);
+  font-family: var(--f-ui); font-size: 15px;
+  overflow: hidden; -webkit-tap-highlight-color: transparent;
+}
+#map { position: fixed; inset: 0; background: var(--land); }
+.glass {
+  background: var(--panel);
+  -webkit-backdrop-filter: saturate(180%) blur(20px); backdrop-filter: saturate(180%) blur(20px);
+  border: 0.5px solid var(--line); box-shadow: var(--shadow);
+}
+
+/* Top bar */
+.top {
+  position: fixed; z-index: 10;
+  top: calc(env(safe-area-inset-top, 0px) + 10px);
+  left: max(12px, env(safe-area-inset-left, 0px));
+  right: max(12px, env(safe-area-inset-right, 0px));
+  display: flex; align-items: center; gap: 10px;
+}
+.brand { display: flex; align-items: baseline; gap: 8px; border-radius: 14px; padding: 9px 14px; min-width: 0; }
+.brand b { font-weight: 700; letter-spacing: -0.02em; white-space: nowrap; }
+.chip { font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.toggle {
+  margin-left: auto; border: 0; cursor: pointer;
+  display: flex; align-items: center; gap: 8px;
+  border-radius: 14px; padding: 10px 14px;
+  font: 600 15px var(--f-ui);
+  background: var(--tag); color: var(--tag-ink); box-shadow: var(--shadow);
+  white-space: nowrap;
+}
+.toggle .sw { width: 30px; height: 18px; border-radius: 9px; background: var(--tag-ink); position: relative; }
+.toggle .sw::after { content: ""; position: absolute; top: 2px; left: 14px; width: 14px; height: 14px; border-radius: 50%; background: var(--tag); transition: left .2s; }
+.toggle[aria-pressed="false"] { background: var(--panel-solid); color: var(--muted); }
+.toggle[aria-pressed="false"] .sw { background: var(--fill); }
+.toggle[aria-pressed="false"] .sw::after { left: 2px; background: #fff; }
+
+/* Toast */
+.toast {
+  position: fixed; z-index: 11;
+  top: calc(env(safe-area-inset-top, 0px) + 66px);
+  left: 50%; transform: translateX(-50%) translateY(-8px);
+  max-width: calc(100% - 32px);
+  background: var(--tag); color: var(--tag-ink);
+  font-weight: 700; font-size: 17px; text-align: center;
+  padding: 12px 18px; border-radius: 16px; box-shadow: var(--shadow);
+  opacity: 0; pointer-events: none; transition: opacity .25s, transform .25s;
+}
+.toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+/* Bottom dock */
+.dock {
+  position: fixed; z-index: 10;
+  left: max(12px, env(safe-area-inset-left, 0px));
+  right: max(12px, env(safe-area-inset-right, 0px));
+  bottom: calc(env(safe-area-inset-bottom, 0px) + 12px);
+  border-radius: 20px; padding: 12px; display: grid; gap: 10px;
+}
+.status { font-size: 13px; color: var(--muted); padding: 0 4px; font-variant-numeric: tabular-nums; }
+.status b { color: var(--fg); font-weight: 600; }
+.row { display: flex; gap: 8px; flex-wrap: wrap; }
+.seg { display: flex; background: var(--fill); border-radius: 10px; padding: 2px; }
+.seg button {
+  border: 0; background: transparent; color: var(--fg);
+  font: 500 14px var(--f-ui); padding: 7px 14px; border-radius: 8px; cursor: pointer;
+}
+.seg button[aria-pressed="true"] { background: #fff; font-weight: 600; box-shadow: 0 2px 6px rgba(0,0,0,.12); }
+.btn {
+  border: 0; background: var(--fill); color: var(--fg);
+  font: 500 14px var(--f-ui); padding: 8px 12px; border-radius: 10px; cursor: pointer;
+  display: inline-flex; align-items: center; gap: 6px;
+}
+.btn[aria-pressed="true"] { background: var(--me); color: #fff; }
+.btn svg { width: 16px; height: 16px; }
+.btn.icon { padding: 8px 10px; }
+.main-row { flex-wrap: nowrap; }
+.main-row .seg { flex: 0 1 auto; min-width: 0; }
+.main-row .btn.icon:last-child { margin-left: auto; }
+#sound[aria-pressed="true"] #soundOff, #sound[aria-pressed="false"] #soundWave { display: none; }
+.status { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+@media (max-width: 360px) { .seg button { padding: 7px 10px; } }
+button:focus-visible { outline: 3px solid var(--me); outline-offset: 2px; }
+
+/* Marker positioning (kept here too in case the map stylesheet loads late) */
+.maplibregl-marker { position: absolute; top: 0; left: 0; will-change: transform; }
+.maplibregl-popup { position: absolute; top: 0; left: 0; display: flex; will-change: transform; pointer-events: none; }
+.maplibregl-popup-content { position: relative; background: #fff; pointer-events: auto; }
+
+/* Listing tags */
+.tag {
+  width: max-content; max-width: 70vw;
+  white-space: nowrap; cursor: pointer;
+  font: 700 13px var(--f-ui); font-variant-numeric: tabular-nums; letter-spacing: -0.01em;
+  padding: 5px 9px 5px 6px; border-radius: 10px;
+  background: var(--tag); color: var(--tag-ink);
+  box-shadow: 0 2px 8px rgba(0,0,0,.25);
+  display: flex; align-items: center; gap: 6px; position: relative; margin-bottom: 7px;
+}
+.tag::after {
+  content: ""; position: absolute; left: 50%; bottom: -6px; transform: translateX(-50%);
+  border: 6px solid transparent; border-bottom: 0; border-top-color: var(--tag);
+}
+.tag .k { font: 800 10px var(--f-ui); background: var(--tag-ink); color: var(--tag); border-radius: 5px; padding: 2px 4px; }
+.tag .m { font-weight: 500; opacity: .75; }
+.tag.sale { background: var(--sale); color: var(--sale-ink); }
+.tag.sale::after { border-top-color: var(--sale); }
+.tag.sale .k { background: var(--sale-ink); color: var(--sale); }
+.tag.near { outline: 3px solid var(--me); }
+
+/* My position */
+.me { width: 46px; height: 46px; position: relative; }
+.me .halo { position: absolute; inset: 0; border-radius: 50%; background: rgba(10,132,255,.18); }
+.me .dot { position: absolute; left: 13px; top: 13px; width: 20px; height: 20px; border-radius: 50%; background: var(--me); border: 3px solid #fff; box-shadow: 0 1px 4px rgba(0,0,0,.3); }
+.me .cone { position: absolute; left: 13px; top: -2px; width: 20px; height: 20px; display: none; }
+.me.has-heading .cone { display: block; }
+.me .car { position: absolute; left: 9.4px; top: -2px; width: 27.2px; height: 49.6px; display: none; filter: drop-shadow(0 3px 4px rgba(0,0,0,.35)); }
+.voice { font: 500 14px var(--f-ui); color: var(--fg); background: var(--fill); border: 0; border-radius: 10px; padding: 8px 10px; max-width: 100%; min-width: 0; }
+.me.car-mode .car { display: block; }
+.me.car-mode .halo, .me.car-mode .dot, .me.car-mode .cone { display: none !important; }
+
+/* Popup */
+.maplibregl-popup-content { border-radius: 14px; padding: 12px 14px; box-shadow: var(--shadow); font-family: var(--f-ui); }
+.pop { min-width: 190px; }
+.pop .t { font-size: 12px; font-weight: 600; color: #6e6e73; }
+.pop .p { font-size: 22px; font-weight: 700; margin: 2px 0 4px; color: #1c1c1e; font-variant-numeric: tabular-nums; }
+.pop .d { color: #3a3a3c; font-size: 14px; line-height: 1.4; }
+.pop .note { margin-top: 6px; font-size: 12px; color: #6e6e73; }
+.pop a { display: inline-block; margin-top: 8px; font-weight: 700; color: #1c1c1e; background: #ffd60a; padding: 7px 11px; border-radius: 9px; text-decoration: none; }
+
+/* Start sheet */
+.start {
+  position: fixed; inset: 0; z-index: 20; display: grid; place-items: center;
+  background: rgba(0, 0, 0, 0.35);
+  padding: 20px max(16px, env(safe-area-inset-left, 0px)) 20px max(16px, env(safe-area-inset-right, 0px));
+}
+.card { background: var(--panel-solid); border-radius: 22px; padding: 22px; max-width: 420px; width: 100%; box-shadow: var(--shadow); display: grid; gap: 12px; }
+.card h1 { margin: 0; font-size: 26px; font-weight: 700; letter-spacing: -0.02em; }
+.card p { margin: 0; color: var(--muted); line-height: 1.45; }
+.card ul { margin: 0; padding-left: 18px; color: var(--muted); line-height: 1.55; }
+.sample-tags { display: flex; gap: 8px; flex-wrap: wrap; }
+.sample-tags .tag::after { display: none; }
+.go { border: 0; background: var(--me); color: #fff; font: 600 17px var(--f-ui); padding: 14px; border-radius: 14px; cursor: pointer; }
+.err { color: #d70015; font-weight: 600; }
+@media (prefers-reduced-motion: reduce) { .toast, .toggle .sw::after { transition: none; } }
+</style>
+</head>
+<body>
+<div id="map" aria-label="Harita"></div>
+
+<div class="top">
+  <div class="brand glass"><b>İlan Radarı</b><span class="chip" id="dataChip">Örnek veri</span></div>
+  <button class="toggle" id="toggle" aria-pressed="true"><span id="toggleTxt">İlanlar</span><span class="sw"></span></button>
+</div>
+
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+<div class="dock glass">
+  <div class="status" id="status">Konum bekleniyor…</div>
+  <div class="row main-row">
+    <div class="seg" role="group" aria-label="Kullanım">
+      <button id="mWalk" aria-pressed="true">Yürüyüş</button>
+      <button id="mCar" aria-pressed="false">Araba</button>
+    </div>
+    <button class="btn" id="sound" aria-pressed="false" aria-label="Sesli uyarı">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 5 6 9H3v6h3l5 4V5z"/><path id="soundWave" d="M15.5 8.5a5 5 0 0 1 0 7"/><path id="soundOff" d="M16 9l5 6M21 9l-5 6"/></svg>
+      <span id="soundTxt">Ses</span>
+    </button>
+    <button class="btn icon" id="recenter" aria-label="Konumuma dön" title="Konumuma dön">
+      <svg viewBox="0 0 24 24" fill="currentColor"><path d="M21 3 3 10.5l7.5 2.2L13 21z"/></svg>
+    </button>
+    <button class="btn icon" id="more" aria-expanded="false" aria-controls="extra" aria-label="Diğer ayarlar" title="Diğer ayarlar">
+      <svg viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/></svg>
+    </button>
+  </div>
+  <div class="row" id="extra" hidden>
+    <select class="voice" id="voice" aria-label="Konuşan ses" hidden></select>
+    <button class="btn" id="demo" aria-pressed="false">Demo</button>
+    <button class="btn" id="reseed">Örnekleri buraya taşı</button>
+  </div>
+</div>
+
+<div class="start" id="start">
+  <div class="card">
+    <h1>İlan Radarı</h1>
+    <p>Etrafındaki ilanlar haritada sarı etiketlerle görünür. Bir ilana yaklaşınca telefon sesli söyler.</p>
+    <div class="sample-tags">
+      <div class="tag"><span class="k">K</span>20k · 1+1 <span class="m">· 65 m²</span></div>
+      <div class="tag sale"><span class="k">S</span>4,2M · 2+1 <span class="m">· 110 m²</span></div>
+    </div>
+    <ul>
+      <li>İlanlar şimdilik <b>örnek</b>, gerçek değil. Bulunduğun yerin etrafına yerleştirilir.</li>
+      <li>Konum izni istenecek; izin ver.</li>
+      <li>Yürürken <b>Yürüyüş</b>, arabada <b>Araba</b> modunu seç. Araba modunda harita gidiş yönüne döner.</li>
+    </ul>
+    <p class="err" id="startErr" hidden></p>
+    <button class="go" id="go">Başla</button>
+  </div>
+</div>
+
+<script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+<script>
+(function () {
+  "use strict";
+
+  if (typeof maplibregl === "undefined") {
+    var e0 = document.getElementById("startErr");
+    e0.textContent = "Harita yüklenemedi. İnternet bağlantını kontrol edip sayfayı yenile.";
+    e0.hidden = false;
+    var g0 = document.getElementById("go");
+    g0.textContent = "Yenile";
+    g0.addEventListener("click", function () { location.reload(); });
+    return;
+  }
+
+  // ---------- settings ----------
+  var MODES = {
+    // alert: how close (metres) a listing must be before it is read out
+    walk: { alert: 40, speed: 1.4, demoBoost: 2.5, zoom: 16.4, pitch: 0,  rotate: false },
+    car:  { alert: 80, speed: 9,   demoBoost: 1,   zoom: 15.9, pitch: 50, rotate: true }
+  };
+  var SHOW_RADIUS = 3000;
+  var DEMO_RADIUS = 350;
+  var FALLBACK = [40.9903, 29.0290]; // Kadıköy [lat, lon]
+
+  // Map colours chosen to resemble the iOS Maps day theme
+  var APPLE = {
+    land: "#f6f3ee", water: "#9fd0f4", park: "#cfe8c3", wood: "#c3e1b6",
+    building: "#e7e3dc", buildingTop: "#ebe7e0",
+    road: "#ffffff", roadCase: "#ddd8cf", major: "#fff3c4", majorCase: "#e8d494",
+    motorway: "#fbd46b", motorwayCase: "#e2b545", rail: "#d4d0c8"
+  };
+
+  // ---------- helpers ----------
+  function store(k, v) { try { if (v === undefined) return localStorage.getItem("ir_" + k); localStorage.setItem("ir_" + k, v); } catch (e) { return null; } }
+  var R = 6371000, rad = Math.PI / 180;
+  function dist(a, b) {
+    var dLat = (b[0] - a[0]) * rad, dLon = (b[1] - a[1]) * rad;
+    var h = Math.sin(dLat / 2) * Math.sin(dLat / 2) + Math.cos(a[0] * rad) * Math.cos(b[0] * rad) * Math.sin(dLon / 2) * Math.sin(dLon / 2);
+    return 2 * R * Math.asin(Math.sqrt(h));
+  }
+  function bearing(a, b) {
+    var y = Math.sin((b[1] - a[1]) * rad) * Math.cos(b[0] * rad);
+    var x = Math.cos(a[0] * rad) * Math.sin(b[0] * rad) - Math.sin(a[0] * rad) * Math.cos(b[0] * rad) * Math.cos((b[1] - a[1]) * rad);
+    return (Math.atan2(y, x) / rad + 360) % 360;
+  }
+  function offset(p, meters, deg) {
+    var d = meters / R, br = deg * rad, la = p[0] * rad, lo = p[1] * rad;
+    var la2 = Math.asin(Math.sin(la) * Math.cos(d) + Math.cos(la) * Math.sin(d) * Math.cos(br));
+    var lo2 = lo + Math.atan2(Math.sin(br) * Math.sin(d) * Math.cos(la), Math.cos(d) - Math.sin(la) * Math.sin(la2));
+    return [la2 / rad, lo2 / rad];
+  }
+  function rnd(a, b) { return a + Math.random() * (b - a); }
+  function pick(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
+  function isRent(l) { return /kira/i.test(l.tur); }
+  function fmtTr(n, d) { return n.toFixed(d).replace(".", ",").replace(/,0$/, ""); }
+  function shortPrice(l) { return isRent(l) ? Math.round(l.fiyat / 1000) + "k" : fmtTr(l.fiyat / 1e6, 1) + "M"; }
+  function longPrice(l) { return l.fiyat.toLocaleString("tr-TR") + " TL"; }
+  function spokenPrice(l) { return isRent(l) ? Math.round(l.fiyat / 1000) + " bin lira" : fmtTr(l.fiyat / 1e6, 1) + " milyon lira"; }
+  function esc(s) { return String(s).replace(/[&<>"']/g, function (c) { return ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]; }); }
+  function ll(p) { return [p[1], p[0]]; } // [lat,lon] -> [lon,lat] for MapLibre
+
+  // ---------- state ----------
+  var mode = store("mode") === "car" ? "car" : "walk";
+  var listingsOn = store("on") !== "0";
+  var soundOn = false, follow = true, demoOn = false, demoTimer = null, demoAngle = 0;
+  var me = null, lastPos = null, heading = null;
+  var listings = [], sampleData = true, sampleCenter = null;
+  var announced = {}, markers = {};
+  var wakeLock = null;
+
+  // ---------- map ----------
+  var map = new maplibregl.Map({
+    container: "map",
+    style: "https://tiles.openfreemap.org/styles/liberty",
+    center: ll(FALLBACK), zoom: MODES[mode].zoom,
+    attributionControl: { compact: true }
+  });
+  var styleReady = false;
+  map.on("style.load", function () { styleReady = true; applyAppleLook(); });
+  map.on("error", function (ev) {
+    // If the vector style cannot load, fall back to a plain street map
+    if (!styleReady && !map.__fallback) {
+      map.__fallback = true;
+      map.setStyle({
+        version: 8,
+        sources: { esri: { type: "raster", tileSize: 256, attribution: "Tiles &copy; Esri",
+          tiles: ["https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}"] } },
+        layers: [{ id: "esri", type: "raster", source: "esri" }]
+      });
+    }
+  });
+  map.on("dragstart", function (e) { if (e.originalEvent) follow = false; });
+  map.on("moveend", function () { if (!me) render(); });
+
+  function setPaint(id, prop, val) { try { map.setPaintProperty(id, prop, val); } catch (e) {} }
+  function applyAppleLook() {
+    var layers = (map.getStyle().layers || []);
+    layers.forEach(function (ly) {
+      var id = ly.id, t = ly.type, isCase = /casing|outline/.test(id);
+      if (t === "background") setPaint(id, "background-color", APPLE.land);
+      else if (t === "fill" && /water|ocean|sea|lake|river/.test(id)) setPaint(id, "fill-color", APPLE.water);
+      else if (t === "line" && /waterway/.test(id)) setPaint(id, "line-color", APPLE.water);
+      else if (t === "fill" && /wood|forest/.test(id)) setPaint(id, "fill-color", APPLE.wood);
+      else if (t === "fill" && /park|grass|garden|cemetery|pitch|landcover/.test(id)) setPaint(id, "fill-color", APPLE.park);
+      else if (t === "fill" && /landuse|residential|natural_earth/.test(id)) setPaint(id, "fill-color", APPLE.land);
+      else if (t === "fill" && /building/.test(id)) { setPaint(id, "fill-color", APPLE.building); setPaint(id, "fill-outline-color", APPLE.building); }
+      else if (t === "fill-extrusion") {
+        setPaint(id, "fill-extrusion-color", APPLE.buildingTop);
+        setPaint(id, "fill-extrusion-opacity", 0.55);
+        setPaint(id, "fill-extrusion-vertical-gradient", false);
+      }
+      else if (t === "line" && /rail|transit/.test(id)) setPaint(id, "line-color", APPLE.rail);
+      else if (t === "line" && /motorway/.test(id)) setPaint(id, "line-color", isCase ? APPLE.motorwayCase : APPLE.motorway);
+      else if (t === "line" && /trunk|primary/.test(id)) setPaint(id, "line-color", isCase ? APPLE.majorCase : APPLE.major);
+      else if (t === "line" && /road|highway|street|minor|service|secondary|tertiary|path|track|bridge|tunnel/.test(id)) setPaint(id, "line-color", isCase ? APPLE.roadCase : APPLE.road);
+    });
+  }
+
+  // My position marker (blue dot with heading cone)
+  var meOuter = document.createElement("div");
+  var meEl = document.createElement("div");
+  meEl.className = "me";
+  // Compact SUV seen from above, nose pointing up (generic design, no badge)
+  var CAR_SVG =
+    '<svg class="car" viewBox="0 0 40 72" aria-hidden="true">' +
+      '<ellipse cx="3.2" cy="24" rx="2.6" ry="1.8" fill="#000"/>' +
+      '<ellipse cx="36.8" cy="24" rx="2.6" ry="1.8" fill="#000"/>' +
+      '<rect x="4" y="3" width="32" height="66" rx="10" fill="#1b1e23" stroke="#000" stroke-width="1.4"/>' +
+      '<path d="M10 9 Q20 6 30 9" fill="none" stroke="#3d434c" stroke-width="1.2"/>' +
+      '<path d="M8 4.8 Q11 3.4 14 4.2 L13.5 7.2 Q10.5 7.4 8.4 8.2 Z" fill="#fff4b8" stroke="#2b2f36" stroke-width=".8"/>' +
+      '<path d="M32 4.8 Q29 3.4 26 4.2 L26.5 7.2 Q29.5 7.4 31.6 8.2 Z" fill="#fff4b8" stroke="#2b2f36" stroke-width=".8"/>' +
+      '<path d="M10 26 L30 26 L28.2 16.5 Q20 14 11.8 16.5 Z" fill="#6f8599"/>' +
+      '<rect x="7.4" y="27" width="2.2" height="24" rx="1" fill="#566a7d"/>' +
+      '<rect x="30.4" y="27" width="2.2" height="24" rx="1" fill="#566a7d"/>' +
+      '<rect x="10.5" y="27" width="19" height="24.5" rx="3" fill="#2a2e35"/>' +
+      '<line x1="12" y1="28.5" x2="12" y2="50" stroke="#7d8793" stroke-width="1.4" stroke-linecap="round"/>' +
+      '<line x1="28" y1="28.5" x2="28" y2="50" stroke="#7d8793" stroke-width="1.4" stroke-linecap="round"/>' +
+      '<path d="M11 52.5 L29 52.5 L27.8 59 Q20 61 12.2 59 Z" fill="#6f8599"/>' +
+      '<path d="M5.6 64 Q6 67.4 10.5 68.2 L11 65.6 Q8 65 6.6 63 Z" fill="#e0313b"/>' +
+      '<path d="M34.4 64 Q34 67.4 29.5 68.2 L29 65.6 Q32 65 33.4 63 Z" fill="#e0313b"/>' +
+    '</svg>';
+  meEl.innerHTML = '<div class="halo"></div><svg class="cone" viewBox="0 0 20 20"><path d="M10 0 L18 16 L10 12 L2 16 Z" fill="#0a84ff" stroke="#fff" stroke-width="1.5"/></svg><div class="dot"></div>' + CAR_SVG;
+  meOuter.appendChild(meEl);
+  meOuter.style.zIndex = "5"; // keep my position above the listing tags
+  var meMarker = new maplibregl.Marker({ element: meOuter, rotationAlignment: "map", pitchAlignment: "map" });
+  var meAdded = false;
+  function drawMe() {
+    if (!me) return;
+    meMarker.setLngLat(ll(me));
+    if (!meAdded) { meMarker.addTo(map); meAdded = true; }
+    meEl.classList.toggle("car-mode", mode === "car");
+    if (heading != null) { meEl.classList.add("has-heading"); meMarker.setRotation(heading); }
+    else meEl.classList.remove("has-heading");
+  }
+
+  // ---------- data ----------
+  var SIZES = { "1+0": [32, 50], "1+1": [50, 80], "2+1": [80, 120], "3+1": [115, 170] };
+  function makeSamples(center) {
+    var out = [], rooms = ["1+0", "1+1", "1+1", "2+1", "2+1", "3+1"];
+    for (var i = 0; i < 24; i++) {
+      var p;
+      if (i < 12) {
+        var ang = i * 30 + rnd(-8, 8);
+        p = offset(center, rnd(120, 260), ang);
+      } else {
+        p = offset(center, rnd(50, 450), rnd(0, 360));
+      }
+      var rent = Math.random() < 0.65;
+      var oda = pick(rooms);
+      var sz = SIZES[oda];
+      var m2 = Math.round(rnd(sz[0], sz[1]) / 5) * 5;
+      var fiyat = rent ? Math.round(rnd(14, 46)) * 1000 : Math.round(rnd(28, 95)) * 100000;
+      out.push({ id: "ornek-" + i, tur: rent ? "Kiralık" : "Satılık", fiyat: fiyat, oda: oda, m2: m2, lat: p[0], lon: p[1], baslik: "Örnek ilan " + (i + 1), link: "" });
+    }
+    return out;
+  }
+  function seedAt(center) {
+    sampleCenter = center;
+    listings = makeSamples(center);
+    announced = {};
+    clearMarkers();
+    store("samples2", JSON.stringify({ v: 3, c: center, l: listings }));
+    render();
+  }
+  function loadData() {
+    // Real data: put an ilanlar.json next to this file. Without it, samples are used.
+    return fetch("ilanlar.json", { cache: "no-store" }).then(function (r) {
+      if (!r.ok) throw new Error("yok");
+      return r.json();
+    }).then(function (data) {
+      var arr = Array.isArray(data) ? data : data.ilanlar;
+      if (!arr || !arr.length) throw new Error("bos");
+      listings = arr.filter(function (l) { return isFinite(l.lat) && isFinite(l.lon) && isFinite(l.fiyat); });
+      sampleData = false;
+      document.getElementById("dataChip").textContent = data.guncelleme ? "Güncelleme " + data.guncelleme : listings.length + " ilan";
+      document.getElementById("reseed").hidden = true;
+    }).catch(function () {
+      sampleData = true;
+      var saved = store("samples2");
+      if (saved) { try { var s = JSON.parse(saved); if (s.v === 3) { sampleCenter = s.c; listings = s.l; } } catch (e) {} }
+    });
+  }
+
+  // ---------- rendering ----------
+  function popupHtml(l) {
+    var d = me ? Math.round(dist(me, [l.lat, l.lon])) + " m uzakta" : "";
+    return '<div class="pop"><div class="t">' + esc(l.tur) + " · " + esc(l.oda) + (l.m2 ? " · " + esc(l.m2) + " m²" : "") + '</div>' +
+      '<div class="p">' + esc(longPrice(l)) + '</div>' +
+      '<div class="d">' + esc(l.baslik || "") + (d ? "<br>" + d : "") + '</div>' +
+      (l.link ? '<a href="' + esc(l.link) + '" target="_blank" rel="noopener">İlanı aç</a>' : "") +
+      (sampleData ? '<div class="note">Örnek ilan, gerçek değil.</div>' : "") + '</div>';
+  }
+  function tagHtml(l) {
+    return '<span class="k">' + (isRent(l) ? "K" : "S") + '</span>' + esc(shortPrice(l)) + " · " + esc(l.oda) +
+      (l.m2 ? ' <span class="m">· ' + esc(l.m2) + ' m²</span>' : "");
+  }
+  function clearMarkers() { Object.keys(markers).forEach(function (id) { markers[id].remove(); }); markers = {}; }
+
+  function render() {
+    var c = me || [map.getCenter().lat, map.getCenter().lng];
+    var shown = 0, keep = {};
+    if (listingsOn) {
+      listings.forEach(function (l) {
+        var d = dist(c, [l.lat, l.lon]);
+        if (d > SHOW_RADIUS) return;
+        shown++; keep[l.id] = true;
+        var mk = markers[l.id];
+        if (!mk) {
+          // The map positions the outer element; the visible tag lives inside it.
+          var el = document.createElement("div");
+          var inner = document.createElement("div");
+          inner.className = "tag" + (isRent(l) ? "" : " sale");
+          inner.innerHTML = tagHtml(l);
+          el.appendChild(inner);
+          mk = new maplibregl.Marker({ element: el, anchor: "bottom" })
+            .setLngLat([l.lon, l.lat])
+            .setPopup(new maplibregl.Popup({ offset: 30, closeButton: false }).setHTML(popupHtml(l)))
+            .addTo(map);
+          markers[l.id] = mk;
+        }
+        mk.getElement().firstChild.classList.toggle("near", !!(me && d <= MODES[mode].alert));
+      });
+    }
+    Object.keys(markers).forEach(function (id) { if (!keep[id]) { markers[id].remove(); delete markers[id]; } });
+
+    var st = document.getElementById("status");
+    if (!listingsOn) st.innerHTML = "İlanlar gizli. Açmak için sağ üstteki düğmeye bas.";
+    else st.innerHTML = "Yakında <b>" + shown + "</b> ilan · uyarı mesafesi <b>" + MODES[mode].alert + " m</b>" +
+      (demoOn ? " · <b>demo</b> çalışıyor" : "") + (me ? "" : " · konum bekleniyor");
+  }
+
+  // ---------- alerts ----------
+  var toastTimer = null;
+  function toast(msg) {
+    var t = document.getElementById("toast");
+    t.textContent = msg; t.classList.add("show");
+    clearTimeout(toastTimer); toastTimer = setTimeout(function () { t.classList.remove("show"); }, 5000);
+  }
+  // Turkish voices: prefer the better-sounding ones the device offers
+  var trVoice = null, trVoices = [];
+  function voiceScore(v) {
+    var n = v.name.toLowerCase(), s = 0;
+    if (/premium|neural|natural|doğal/.test(n)) s += 30;
+    if (/enhanced|gelişmiş|geliştirilmiş/.test(n)) s += 20;
+    if (/google/.test(n)) s += 15;
+    if (!v.localService) s += 5;
+    if (/compact|kompakt|eloquence|grandma|grandpa|rocko|shelley|flo|reed|sandy/.test(n)) s -= 20;
+    return s;
+  }
+  function pickVoice() {
+    try {
+      trVoices = speechSynthesis.getVoices().filter(function (x) { return /^tr/i.test(x.lang); })
+        .sort(function (a, b) { return voiceScore(b) - voiceScore(a); });
+    } catch (e) { trVoices = []; }
+    var saved = store("voice");
+    trVoice = trVoices.filter(function (v) { return v.name === saved; })[0] || trVoices[0] || null;
+    var sel = document.getElementById("voice");
+    sel.innerHTML = "";
+    trVoices.forEach(function (v) {
+      var o = document.createElement("option");
+      o.value = v.name; o.textContent = "Ses: " + v.name.replace(/\s*\(.*\)\s*/, " ").trim();
+      if (trVoice && v.name === trVoice.name) o.selected = true;
+      sel.appendChild(o);
+    });
+    sel.hidden = trVoices.length < 2;
+  }
+  if ("speechSynthesis" in window) { pickVoice(); speechSynthesis.onvoiceschanged = pickVoice; }
+  document.getElementById("voice").addEventListener("change", function (e) {
+    trVoice = trVoices.filter(function (v) { return v.name === e.target.value; })[0] || trVoice;
+    store("voice", e.target.value);
+    var was = soundOn; soundOn = true;
+    try { speechSynthesis.cancel(); } catch (er) {}
+    speak("Sağında kiralık iki artı bir, doksan metrekare, otuz bin lira.");
+    soundOn = was;
+  });
+  function speak(text) {
+    if (!soundOn || !("speechSynthesis" in window)) return;
+    try {
+      var u = new SpeechSynthesisUtterance(text);
+      u.lang = "tr-TR"; if (trVoice) u.voice = trVoice;
+      u.rate = 0.95; u.pitch = 1;
+      speechSynthesis.speak(u);
+    } catch (e) {}
+  }
+  function isSpeaking() { try { return soundOn && (speechSynthesis.speaking || speechSynthesis.pending); } catch (e) { return false; } }
+  var lastAlertAt = 0;
+  function sideText(l) {
+    if (heading == null) return { txt: "Yakınında", skip: false };
+    var rel = ((bearing(me, [l.lat, l.lon]) - heading + 540) % 360) - 180;
+    if (Math.abs(rel) > 135) return { txt: "Arkanda", skip: mode === "car" };
+    if (rel >= 25) return { txt: "Sağında", skip: false };
+    if (rel <= -25) return { txt: "Solunda", skip: false };
+    return { txt: "İleride", skip: false };
+  }
+  // A listing is read out once it is beside you (or very close), one at a time.
+  function checkNearby() {
+    if (!me || !listingsOn) return;
+    var limit = MODES[mode].alert, best = null, bestD = Infinity;
+    listings.forEach(function (l) {
+      var d = dist(me, [l.lat, l.lon]);
+      if (announced[l.id] && d > limit * 3) delete announced[l.id];
+      if (announced[l.id] || d > limit) return;
+      if (heading != null && d > limit * 0.5) {
+        var rel = Math.abs(((bearing(me, [l.lat, l.lon]) - heading + 540) % 360) - 180);
+        if (rel < 50) return;          // still ahead: wait until we are next to it
+      }
+      if (d < bestD) { best = l; bestD = d; }
+    });
+    if (!best) return;
+    // Let the current sentence finish and leave a short pause before the next one.
+    if (isSpeaking() || Date.now() - lastAlertAt < 2500) return;
+    announced[best.id] = true;
+    var s = sideText(best);
+    if (s.skip) return;
+    lastAlertAt = Date.now();
+    var m2 = best.m2 ? " · " + best.m2 + " m²" : "";
+    toast(s.txt + ": " + best.tur.toLowerCase() + " " + best.oda + m2 + " · " + shortPrice(best));
+    speak(s.txt + " " + best.tur.toLowerCase() + " " + best.oda.replace("+", " artı ") +
+      (best.m2 ? ", " + best.m2 + " metrekare" : "") + ", " + spokenPrice(best) + ".");
+  }
+
+  // ---------- camera ----------
+  // Keep my position inside the visible part of the map (above the control panel).
+  // In car mode it sits low on the screen so the road ahead is visible, like iOS Maps.
+  function viewPadding() {
+    var h = window.innerHeight, dockTop = document.querySelector(".dock").getBoundingClientRect().top;
+    var bottom = Math.max(0, Math.round(h - dockTop + 8));
+    var top = mode === "car" ? Math.round(h * 0.5) : 70;
+    if (top > h - bottom - 60) top = Math.max(0, h - bottom - 60);
+    return { top: top, bottom: bottom, left: 0, right: 0 };
+  }
+  function moveCamera(instant) {
+    if (!me || !follow) return;
+    var m = MODES[mode];
+    var opts = { center: ll(me), pitch: m.pitch, padding: viewPadding(), duration: instant ? 0 : 800, essential: true };
+    opts.bearing = (m.rotate && heading != null) ? heading : 0;
+    if (instant) opts.zoom = m.zoom;
+    map.easeTo(opts);
+  }
+
+  // ---------- position ----------
+  function onPosition(lat, lon, gpsHeading, speed) {
+    var cur = [lat, lon];
+    if (gpsHeading != null && !isNaN(gpsHeading) && speed != null && speed > 0.8) heading = gpsHeading;
+    else if (lastPos && dist(lastPos, cur) > 4) heading = bearing(lastPos, cur);
+    if (!lastPos || dist(lastPos, cur) > 4) lastPos = cur;
+    var first = !me;
+    me = cur;
+    drawMe();
+    if (first && sampleData && (!sampleCenter || dist(sampleCenter, me) > 5000)) seedAt(me);
+    moveCamera(first);
+    render();
+    checkNearby();
+  }
+  function startGps() {
+    if (!("geolocation" in navigator)) { gpsFailed("Bu tarayıcı konum vermiyor."); return; }
+    navigator.geolocation.watchPosition(function (pos) {
+      if (demoOn) return;
+      var c = pos.coords;
+      onPosition(c.latitude, c.longitude, c.heading, c.speed);
+    }, function (err) {
+      gpsFailed(err.code === 1 ? "Konum izni verilmedi. Ayarlar > Gizlilik > Konum Servisleri > Safari'den izin verebilirsin." :
+        "Konum alınamadı. Açık havada tekrar dene.");
+    }, { enableHighAccuracy: true, maximumAge: 1000, timeout: 20000 });
+  }
+  function gpsFailed(msg) {
+    toast(msg);
+    if (!me && !demoOn) {
+      if (sampleData && !sampleCenter) seedAt(FALLBACK);
+      map.jumpTo({ center: ll(sampleCenter || FALLBACK), zoom: MODES[mode].zoom });
+      render();
+      document.getElementById("status").innerHTML = "Konum yok. <b>Demo</b> ile örnek bir geziyi izleyebilirsin.";
+    }
+  }
+
+  // ---------- demo: follow a real route along the streets ----------
+  var demoRoute = null; // { pts: [[lat,lon],...], cum: [metres...], total, center }
+  var demoS = 0;        // metres travelled along the route
+
+  function routeFrom(coords, center) {
+    var pts = coords.map(function (c) { return [c[1], c[0]]; });
+    var cum = [0];
+    for (var i = 1; i < pts.length; i++) cum.push(cum[i - 1] + dist(pts[i - 1], pts[i]));
+    return { pts: pts, cum: cum, total: cum[cum.length - 1], center: center };
+  }
+  function pointAt(s) {
+    var r = demoRoute, i = 1;
+    while (i < r.cum.length - 1 && r.cum[i] < s) i++;
+    var a = r.pts[i - 1], b = r.pts[i];
+    var seg = r.cum[i] - r.cum[i - 1] || 1;
+    var t = Math.min(1, Math.max(0, (s - r.cum[i - 1]) / seg));
+    return { p: [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t], hdg: bearing(a, b) };
+  }
+
+  function fetchRoute(center) {
+    // Waypoints on a ring around the centre; the routing service snaps them to roads.
+    var wps = [];
+    for (var k = 0; k < 6; k++) wps.push(offset(center, DEMO_RADIUS, k * 60));
+    wps.push(wps[0]);
+    var q = wps.map(function (p) { return p[1].toFixed(6) + "," + p[0].toFixed(6); }).join(";");
+    var url = "https://router.project-osrm.org/route/v1/driving/" + q + "?overview=full&geometries=geojson";
+    return fetch(url).then(function (r) { if (!r.ok) throw new Error("rota"); return r.json(); })
+      .then(function (j) {
+        if (!j.routes || !j.routes[0]) throw new Error("rota");
+        return routeFrom(j.routes[0].geometry.coordinates, center);
+      });
+  }
+
+  function circleRoute(center) {
+    var coords = [];
+    for (var a = 0; a <= 360; a += 5) { var p = offset(center, DEMO_RADIUS, a); coords.push([p[1], p[0]]); }
+    return routeFrom(coords, center);
+  }
+
+  // Put the first eight sample listings beside the route, alternating left and right.
+  function placeSamplesOnRoute() {
+    if (!sampleData || !demoRoute) return;
+    var n = Math.min(12, listings.length);
+    for (var i = 0; i < n; i++) {
+      var at = pointAt(demoRoute.total * (i + 0.5) / n);
+      var side = i % 2 === 0 ? 90 : -90;
+      var p = offset(at.p, rnd(18, 32), at.hdg + side);
+      listings[i].lat = p[0]; listings[i].lon = p[1];
+    }
+    store("samples2", JSON.stringify({ v: 3, c: sampleCenter, l: listings }));
+    clearMarkers();
+    render();
+  }
+
+  function drawRouteLine() {
+    if (!demoRoute) return;
+    var data = { type: "Feature", geometry: { type: "LineString", coordinates: demoRoute.pts.map(ll) } };
+    function add() {
+      try {
+        if (map.getSource("demo-route")) { map.getSource("demo-route").setData(data); return; }
+        map.addSource("demo-route", { type: "geojson", data: data });
+        map.addLayer({ id: "demo-route-casing", type: "line", source: "demo-route",
+          layout: { "line-cap": "round", "line-join": "round" }, paint: { "line-color": "#0a5fd1", "line-width": 11 } });
+        map.addLayer({ id: "demo-route", type: "line", source: "demo-route",
+          layout: { "line-cap": "round", "line-join": "round" }, paint: { "line-color": "#2f8bff", "line-width": 7 } });
+      } catch (e) {}
+    }
+    if (map.isStyleLoaded()) add(); else map.once("idle", add);
+  }
+  function hideRouteLine() {
+    try {
+      if (map.getLayer("demo-route")) map.removeLayer("demo-route");
+      if (map.getLayer("demo-route-casing")) map.removeLayer("demo-route-casing");
+      if (map.getSource("demo-route")) map.removeSource("demo-route");
+    } catch (e) {}
+  }
+
+  function demoStep() {
+    if (!demoRoute) return;
+    var m = MODES[mode];
+    demoS = (demoS + m.speed * m.demoBoost * 0.5) % demoRoute.total;
+    var at = pointAt(demoS);
+    onPosition(at.p[0], at.p[1], at.hdg, m.speed);
+  }
+
+  function setDemo(on) {
+    demoOn = on;
+    var b = document.getElementById("demo");
+    b.setAttribute("aria-pressed", on ? "true" : "false");
+    b.textContent = on ? "Demoyu durdur" : "Demo";
+    clearInterval(demoTimer);
+    if (!on) { hideRouteLine(); render(); return; }
+
+    follow = true; announced = {};
+    var center = sampleCenter || me || FALLBACK;
+    function go() {
+      demoS = 0;
+      placeSamplesOnRoute();
+      drawRouteLine();
+      demoTimer = setInterval(demoStep, 500);
+      demoStep();
+    }
+    if (demoRoute && demoRoute.center === center) { go(); return; }
+    b.textContent = "Rota hazırlanıyor…";
+    fetchRoute(center).then(function (r) { demoRoute = r; })
+      .catch(function () {
+        demoRoute = circleRoute(center);
+        toast("Sokak rotası alınamadı, demo basit bir tur atacak.");
+      })
+      .then(function () {
+        if (!demoOn) return;
+        b.textContent = "Demoyu durdur";
+        go();
+      });
+    render();
+  }
+
+  // ---------- screen stays on ----------
+  function keepAwake() {
+    if (!("wakeLock" in navigator)) return;
+    navigator.wakeLock.request("screen").then(function (l) { wakeLock = l; }).catch(function () {});
+  }
+  document.addEventListener("visibilitychange", function () { if (document.visibilityState === "visible") keepAwake(); });
+
+  // ---------- controls ----------
+  function setMode(m) {
+    mode = m; store("mode", m);
+    document.getElementById("mWalk").setAttribute("aria-pressed", m === "walk" ? "true" : "false");
+    document.getElementById("mCar").setAttribute("aria-pressed", m === "car" ? "true" : "false");
+    announced = {};
+    follow = true;
+    drawMe();
+    if (me) moveCamera(true); else map.easeTo({ pitch: MODES[m].pitch, bearing: 0 });
+    render();
+  }
+  function setListings(on) {
+    listingsOn = on; store("on", on ? "1" : "0");
+    document.getElementById("toggle").setAttribute("aria-pressed", on ? "true" : "false");
+    document.getElementById("toggleTxt").textContent = on ? "İlanlar açık" : "İlanlar kapalı";
+    render();
+  }
+  function setSound(on) {
+    soundOn = on;
+    document.getElementById("sound").setAttribute("aria-pressed", on ? "true" : "false");
+    document.getElementById("soundTxt").textContent = "Ses";
+    document.getElementById("sound").title = on ? "Sesli uyarı açık" : "Sesli uyarı kapalı";
+    if (on) speak("Sesli uyarı açık.");
+    else try { speechSynthesis.cancel(); } catch (e) {}
+  }
+
+  document.getElementById("toggle").addEventListener("click", function () { setListings(!listingsOn); });
+  document.getElementById("mWalk").addEventListener("click", function () { setMode("walk"); });
+  document.getElementById("mCar").addEventListener("click", function () { setMode("car"); });
+  document.getElementById("sound").addEventListener("click", function () { setSound(!soundOn); });
+  document.getElementById("recenter").addEventListener("click", function () { follow = true; moveCamera(true); });
+  document.getElementById("demo").addEventListener("click", function () { setDemo(!demoOn); });
+  document.getElementById("more").addEventListener("click", function () {
+    var extra = document.getElementById("extra"), btn = document.getElementById("more");
+    extra.hidden = !extra.hidden;
+    btn.setAttribute("aria-expanded", extra.hidden ? "false" : "true");
+    btn.setAttribute("aria-pressed", extra.hidden ? "false" : "true");
+    moveCamera(false);
+  });
+  window.addEventListener("resize", function () { moveCamera(false); });
+  document.getElementById("reseed").addEventListener("click", function () {
+    var c = me || [map.getCenter().lat, map.getCenter().lng];
+    seedAt(c); toast("Örnek ilanlar bulunduğun yere taşındı.");
+  });
+  document.getElementById("go").addEventListener("click", function () {
+    document.getElementById("start").hidden = true;
+    setSound(true);
+    keepAwake();
+    startGps();
+  });
+
+  // ---------- boot ----------
+  setMode(mode);
+  setListings(listingsOn);
+  loadData().then(render);
+})();
+</script>
+</body>
+</html>
