@@ -513,10 +513,11 @@ button:focus-visible { outline: 3px solid var(--me); outline-offset: 2px; }
       return geoCache[key];
     }).catch(function () { return null; });
   }
-  // Spread listings that share the same neighbourhood point a little, so their tags do not sit on top of each other
+  // Spread listings that share the same neighbourhood point over a spiral (about 60 m apart),
+  // so many listings in one neighbourhood do not sit on top of each other
   function spread(item, idx) {
     if (!item.approx) return;
-    var p = offset([item.lat, item.lon], 40 + (idx % 4) * 35, (idx * 137) % 360);
+    var p = offset([item.lat, item.lon], 60 * Math.sqrt(idx), (idx * 137.508) % 360);
     item.lat = p[0]; item.lon = p[1];
   }
   function locatePending(pending) {
