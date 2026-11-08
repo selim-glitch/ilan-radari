@@ -417,32 +417,124 @@ button:focus-visible { outline: 3px solid var(--me); outline-offset: 2px; }
     store("samples2", JSON.stringify({ v: 3, c: center, l: listings }));
     render();
   }
-  function loadData() {
-    // Real data: put an ilanlar.json next to this file. Without it, samples are used.
-    return fetch("ilanlar.json", { cache: "no-store" }).then(function (r) {
-      if (!r.ok) throw new Error("yok");
-      return r.json();
-    }).then(function (data) {
-      var arr = Array.isArray(data) ? data : data.ilanlar;
-      if (!arr || !arr.length) throw new Error("bos");
-      listings = arr.filter(function (l) { return isFinite(l.lat) && isFinite(l.lon) && isFinite(l.fiyat); });
-      sampleData = false;
-      document.getElementById("dataChip").textContent = data.guncelleme ? "Güncelleme " + data.guncelleme : listings.length + " ilan";
-      document.getElementById("reseed").hidden = true;
-    }).catch(function () {
-      sampleData = true;
-      var saved = store("samples2");
-      if (saved) { try { var s = JSON.parse(saved); if (s.v === 3) { sampleCenter = s.c; listings = s.l; } } catch (e) {} }
-    });
+  // ---------- listings from the Google Sheet ----------
+  // The sheet must be shared as "Anyone with the link: Viewer".
+  var SHEET_ID = "1ku8BTzbDzP4vE2MRLbjA7woLpHmcdNdgEuOn5gCe-Nc";
+  var SHEET_CSV = "https://docs.google.com/spreadsheets/d/" + SHEET_ID + "/gviz/tq?tqx=out:csv&headers=1";
+  var lastLoad = 0;
+
+  function parseCSV(text) {
+    var rows = [], row = [], cell = "", q = false;
+    for (var i = 0; i < text.length; i++) {
+      var ch = text[i];
+      if (q) {
+        if (ch === '"') { if (text[i + 1] === '"') { cell += '"'; i++; } else q = false; }
+        else cell += ch;
+      } else if (ch === '"') q = true;
+      else if (ch === ",") { row.push(cell); cell = ""; }
+      else if (ch === "\n" || ch === "\r") {
+        if (ch === "\r" && text[i + 1] === "\n") i++;
+        row.push(cell); rows.push(row); row = []; cell = "";
+      } else cell += ch;
+    }
+    if (cell !== "" || row.length) { row.push(cell); rows.push(row); }
+    return rows;
   }
+  function num(s) {
+    // "40,98761" or "40.98761" -> 40.98761
+    s = String(s || "").trim().replace(/\s/g, "");
+    if (!s) return NaN;
+    if (s.indexOf(",") >= 0 && s.indexOf(".") >= 0) s = s.lastIndexOf(",") > s.lastIndexOf(".") ? s.replace(/\./g, "").replace(",", ".") : s.replace(/,/g, "");
+    else s = s.replace(",", ".");
+    return parseFloat(s);
+  }
+  function price(s) { var d = String(s || "").replace(/[^\d]/g, ""); return d ? parseInt(d, 10) : NaN; }
+  function coordsIn(s) {
+    var m = String(s || "").match(/(-?\d{1,3}[.,]\d+)\s*[,;\s]\s*(-?\d{1,3}[.,]\d+)/);
+    return m ? [num(m[1]), num(m[2])] : null;
+  }
+
+  function rowsToListings(rows) {
+    if (!rows.length) return { list: [], noLoc: 0 };
+    var h = rows[0].map(function (x) { return String(x).trim().toLocaleLowerCase("tr"); });
+    function c(start) { for (var i = 0; i < h.length; i++) if (h[i].indexOf(start) === 0) return i; return -1; }
+    var C = { baslik: c("ilan başlığı"), tip: c("emlak tipi"), fiyat: c("fiyat"), oda: c("oda"), m2: c("m²"),
+      mahalle: c("mahalle"), tarih: c("ilan tarihi"), link: c("ilan linki"), konum: c("konum"),
+      enlem: c("enlem"), boylam: c("boylam"), aktif: c("aktif") };
+    function v(r, k) { return C[k] >= 0 ? String(r[C[k]] || "").trim() : ""; }
+    var list = [], noLoc = 0;
+    rows.slice(1).forEach(function (r, i) {
+      if (!r.join("").trim()) return;
+      if (/^hay/i.test(v(r, "aktif"))) return;
+      var f = price(v(r, "fiyat"));
+      if (!isFinite(f)) return;
+      var lat = num(v(r, "enlem")), lon = num(v(r, "boylam"));
+      if (!isFinite(lat) || !isFinite(lon)) { var k = coordsIn(v(r, "konum")); if (k) { lat = k[0]; lon = k[1]; } }
+      if (!isFinite(lat) || !isFinite(lon)) { noLoc++; return; }
+      var tip = v(r, "tip");
+      var link = v(r, "link");
+      list.push({
+        id: "satir-" + (i + 2),
+        tur: /sat/i.test(tip) ? "Satılık" : "Kiralık",
+        tip: tip,
+        fiyat: f,
+        oda: v(r, "oda") || "?",
+        m2: Math.round(num(v(r, "m2"))) || "",
+        baslik: v(r, "baslik"),
+        mahalle: v(r, "mahalle"),
+        tarih: v(r, "tarih"),
+        link: /^https?:\/\//i.test(link) ? link : "",
+        lat: lat, lon: lon
+      });
+    });
+    return { list: list, noLoc: noLoc };
+  }
+
+  function useSamples() {
+    sampleData = true;
+    document.getElementById("dataChip").textContent = "Örnek veri";
+    document.getElementById("reseed").hidden = false;
+    var saved = store("samples2");
+    if (saved) { try { var s = JSON.parse(saved); if (s.v === 3) { sampleCenter = s.c; listings = s.l; } } catch (e) {} }
+  }
+
+  function loadData(quiet) {
+    lastLoad = Date.now();
+    return fetch(SHEET_CSV + "&t=" + Date.now(), { cache: "no-store" }).then(function (r) {
+      if (!r.ok) throw new Error("http " + r.status);
+      return r.text();
+    }).then(function (text) {
+      if (/^\s*</.test(text)) throw new Error("not shared");   // got a sign-in page instead of CSV
+      var res = rowsToListings(parseCSV(text));
+      if (!res.list.length) {
+        if (!quiet) toast(res.noLoc ? "Tablodaki ilanların konumu yok. Tabloda İlan Radarı → Konumları doldur'a bas." : "Tabloda henüz ilan yok. Şimdilik örnek ilanlar gösteriliyor.");
+        useSamples(); return;
+      }
+      listings = res.list;
+      sampleData = false;
+      announced = {};
+      clearMarkers();
+      document.getElementById("dataChip").textContent = listings.length + " ilan";
+      document.getElementById("reseed").hidden = true;
+      if (res.noLoc && !quiet) toast(res.noLoc + " ilanın konumu yok, haritada gösterilmiyor.");
+    }).catch(function () {
+      if (!quiet) toast("Tabloya ulaşılamadı. Tablonun “bağlantıya sahip herkes görüntüleyebilir” olarak paylaşıldığından emin ol.");
+      if (!listings.length || sampleData) useSamples();
+    }).then(render);
+  }
+  // Refresh the listings when the app comes back to the screen (at most every 5 minutes)
+  document.addEventListener("visibilitychange", function () {
+    if (document.visibilityState === "visible" && Date.now() - lastLoad > 5 * 60 * 1000) loadData(true);
+  });
 
   // ---------- rendering ----------
   function popupHtml(l) {
     var d = me ? Math.round(dist(me, [l.lat, l.lon])) + " m uzakta" : "";
-    return '<div class="pop"><div class="t">' + esc(l.tur) + " · " + esc(l.oda) + (l.m2 ? " · " + esc(l.m2) + " m²" : "") + '</div>' +
+    var meta = [l.mahalle, l.tarih].filter(Boolean).map(esc).join(" · ");
+    return '<div class="pop"><div class="t">' + esc(l.tip || l.tur) + " · " + esc(l.oda) + (l.m2 ? " · " + esc(l.m2) + " m²" : "") + '</div>' +
       '<div class="p">' + esc(longPrice(l)) + '</div>' +
-      '<div class="d">' + esc(l.baslik || "") + (d ? "<br>" + d : "") + '</div>' +
-      (l.link ? '<a href="' + esc(l.link) + '" target="_blank" rel="noopener">İlanı aç</a>' : "") +
+      '<div class="d">' + esc(l.baslik || "") + (meta ? "<br>" + meta : "") + (d ? "<br>" + d : "") + '</div>' +
+      (l.link ? '<a href="' + esc(l.link) + '" target="_blank" rel="noopener">Sahibinden\'de aç</a>' : "") +
       (sampleData ? '<div class="note">Örnek ilan, gerçek değil.</div>' : "") + '</div>';
   }
   function tagHtml(l) {
@@ -467,9 +559,11 @@ button:focus-visible { outline: 3px solid var(--me); outline-offset: 2px; }
           inner.className = "tag" + (isRent(l) ? "" : " sale");
           inner.innerHTML = tagHtml(l);
           el.appendChild(inner);
+          var pop = new maplibregl.Popup({ offset: 30, closeButton: false }).setHTML(popupHtml(l));
+          (function (p, item) { p.on("open", function () { p.setHTML(popupHtml(item)); }); })(pop, l);
           mk = new maplibregl.Marker({ element: el, anchor: "bottom" })
             .setLngLat([l.lon, l.lat])
-            .setPopup(new maplibregl.Popup({ offset: 30, closeButton: false }).setHTML(popupHtml(l)))
+            .setPopup(pop)
             .addTo(map);
           markers[l.id] = mk;
         }
