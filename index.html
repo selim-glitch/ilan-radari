@@ -110,12 +110,14 @@ body {
 .btn[aria-pressed="true"] { background: var(--me); color: #fff; }
 .btn svg { width: 16px; height: 16px; }
 .btn.icon { padding: 8px 10px; }
-.main-row { flex-wrap: nowrap; }
+.main-row { flex-wrap: nowrap; gap: 6px; }
+#sound { padding: 8px 10px; }
 .main-row .seg { flex: 0 1 auto; min-width: 0; }
 .main-row .btn.icon:last-child { margin-left: auto; }
+#demo { white-space: nowrap; flex: 0 0 auto; }
 #sound[aria-pressed="true"] #soundOff, #sound[aria-pressed="false"] #soundWave { display: none; }
 .status { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-@media (max-width: 360px) { .seg button { padding: 7px 10px; } }
+@media (max-width: 400px) { .seg button { padding: 7px 7px; font-size: 13px; } .main-row .btn { padding: 8px 7px; font-size: 13px; } .main-row { gap: 4px; } }
 button:focus-visible { outline: 3px solid var(--me); outline-offset: 2px; }
 
 /* Marker positioning (kept here too in case the map stylesheet loads late) */
@@ -132,7 +134,7 @@ button:focus-visible { outline: 3px solid var(--me); outline-offset: 2px; }
   width: max-content; max-width: 70vw;
   white-space: nowrap; cursor: pointer;
   font: 700 13px var(--f-ui); font-variant-numeric: tabular-nums; letter-spacing: -0.01em;
-  padding: 5px 9px 5px 6px; border-radius: 10px;
+  padding: 5px 9px; border-radius: 10px;
   background: var(--rent); color: var(--rent-ink);
   box-shadow: 0 2px 8px rgba(0,0,0,.25);
   display: flex; align-items: center; gap: 6px; position: relative; margin-bottom: 7px;
@@ -204,18 +206,18 @@ button:focus-visible { outline: 3px solid var(--me); outline-offset: 2px; }
     </div>
     <button class="btn" id="sound" aria-pressed="false" aria-label="Sesli uyarı">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 5 6 9H3v6h3l5 4V5z"/><path id="soundWave" d="M15.5 8.5a5 5 0 0 1 0 7"/><path id="soundOff" d="M16 9l5 6M21 9l-5 6"/></svg>
-      <span id="soundTxt">Ses</span>
+      <span id="soundTxt" hidden>Ses</span>
     </button>
     <button class="btn icon" id="recenter" aria-label="Konumuma dön" title="Konumuma dön">
       <svg viewBox="0 0 24 24" fill="currentColor"><path d="M21 3 3 10.5l7.5 2.2L13 21z"/></svg>
     </button>
+    <button class="btn" id="demo" aria-pressed="false">Demo</button>
     <button class="btn icon" id="more" aria-expanded="false" aria-controls="extra" aria-label="Diğer ayarlar" title="Diğer ayarlar">
       <svg viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/></svg>
     </button>
   </div>
   <div class="row" id="extra" hidden>
     <select class="voice" id="voice" aria-label="Konuşan ses" hidden></select>
-    <button class="btn" id="demo" aria-pressed="false">Demo</button>
     <button class="btn" id="reseed">Örnekleri buraya taşı</button>
   </div>
 </div>
@@ -225,8 +227,8 @@ button:focus-visible { outline: 3px solid var(--me); outline-offset: 2px; }
     <h1>İlan Radarı</h1>
     <p>Etrafındaki ilanlar haritada etiketlerle (mavi kiralık, kırmızı satılık) görünür. Bir ilana yaklaşınca telefon sesli söyler.</p>
     <div class="sample-tags">
-      <div class="tag"><span class="k">K</span>20k · 1+1 <span class="m">· 65 m²</span></div>
-      <div class="tag sale"><span class="k">S</span>4,2M · 2+1 <span class="m">· 110 m²</span></div>
+      <div class="tag">20k · 1+1 <span class="m">· 65 m²</span></div>
+      <div class="tag sale">4,2M · 2+1 <span class="m">· 110 m²</span></div>
     </div>
     <ul>
       <li>İlanlar şimdilik <b>örnek</b>, gerçek değil. Bulunduğun yerin etrafına yerleştirilir.</li>
@@ -608,7 +610,7 @@ button:focus-visible { outline: 3px solid var(--me); outline-offset: 2px; }
       (sampleData ? '<div class="note">Örnek ilan, gerçek değil.</div>' : "") + '</div>';
   }
   function tagHtml(l) {
-    return '<span class="k">' + (isRent(l) ? "K" : "S") + '</span>' + esc(shortPrice(l)) + " · " + esc(l.oda) +
+    return esc(shortPrice(l)) + " · " + esc(l.oda) +
       (l.m2 ? ' <span class="m">· ' + esc(l.m2) + ' m²</span>' : "");
   }
   function clearMarkers() { Object.keys(markers).forEach(function (id) { markers[id].remove(); }); markers = {}; }
@@ -882,7 +884,7 @@ button:focus-visible { outline: 3px solid var(--me); outline-offset: 2px; }
     demoOn = on;
     var b = document.getElementById("demo");
     b.setAttribute("aria-pressed", on ? "true" : "false");
-    b.textContent = on ? "Demoyu durdur" : "Demo";
+    b.textContent = on ? "Durdur" : "Demo";
     clearInterval(demoTimer);
     meMarker.setDraggable(on);
     if (!on) { hideRouteLine(); render(); return; }
@@ -897,7 +899,7 @@ button:focus-visible { outline: 3px solid var(--me); outline-offset: 2px; }
       demoStep();
     }
     if (demoRoute && demoRoute.center === center) { go(); hintDrag(); return; }
-    b.textContent = "Rota hazırlanıyor…";
+    b.textContent = "…";
     fetchRoute(center).then(function (r) { demoRoute = r; })
       .catch(function () {
         demoRoute = circleRoute(center);
@@ -905,7 +907,7 @@ button:focus-visible { outline: 3px solid var(--me); outline-offset: 2px; }
       })
       .then(function () {
         if (!demoOn) return;
-        b.textContent = "Demoyu durdur";
+        b.textContent = "Durdur";
         go();
         hintDrag();
       });
@@ -921,13 +923,13 @@ button:focus-visible { outline: 3px solid var(--me); outline-offset: 2px; }
   }
   function moveDemoTo(p) {
     var b = document.getElementById("demo");
-    b.textContent = "Rota hazırlanıyor…";
+    b.textContent = "…";
     var center = offset(p, DEMO_RADIUS * 0.8, (heading || 0));   // tour the streets just ahead of the new spot
     fetchRoute(center, p).then(function (r) { demoRoute = r; })
       .catch(function () { demoRoute = circleRoute(p); })
       .then(function () {
         if (!demoOn) return;
-        b.textContent = "Demoyu durdur";
+        b.textContent = "Durdur";
         follow = true; announced = {};
         clearInterval(demoTimer);
         demoS = 0;
