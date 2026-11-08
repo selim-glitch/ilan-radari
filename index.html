@@ -468,12 +468,8 @@ button:focus-visible { outline: 3px solid var(--me); outline-offset: 2px; }
       if (/^hay/i.test(v(r, "aktif"))) return;
       var f = price(v(r, "fiyat"));
       if (!isFinite(f)) return;
-      var lat = num(v(r, "enlem")), lon = num(v(r, "boylam"));
-      if (!isFinite(lat) || !isFinite(lon)) { var k = coordsIn(v(r, "konum")); if (k) { lat = k[0]; lon = k[1]; } }
-      if (!isFinite(lat) || !isFinite(lon)) { noLoc++; return; }
-      var tip = v(r, "tip");
-      var link = v(r, "link");
-      list.push({
+      var tip = v(r, "tip"), link = v(r, "link"), konum = v(r, "konum"), mahalle = v(r, "mahalle");
+      var item = {
         id: "satir-" + (i + 2),
         tur: /sat/i.test(tip) ? "Satılık" : "Kiralık",
         tip: tip,
@@ -481,13 +477,71 @@ button:focus-visible { outline: 3px solid var(--me); outline-offset: 2px; }
         oda: v(r, "oda") || "?",
         m2: Math.round(num(v(r, "m2"))) || "",
         baslik: v(r, "baslik"),
-        mahalle: v(r, "mahalle"),
+        mahalle: mahalle,
         tarih: v(r, "tarih"),
         link: /^https?:\/\//i.test(link) ? link : "",
-        lat: lat, lon: lon
-      });
+        lat: NaN, lon: NaN, approx: false, query: ""
+      };
+      // 1) Enlem/Boylam columns (optional)  2) coordinates typed in Konum
+      var lat = num(v(r, "enlem")), lon = num(v(r, "boylam"));
+      if (!isFinite(lat) || !isFinite(lon)) { var k = coordsIn(konum); if (k) { lat = k[0]; lon = k[1]; } }
+      if (isFinite(lat) && isFinite(lon)) { item.lat = lat; item.lon = lon; }
+      // 3) otherwise look up the address, or the neighbourhood, on the map
+      else if (konum) item.query = konum;
+      else if (mahalle) { item.query = /,/.test(mahalle) ? mahalle : mahalle + ", " + DEFAULT_REGION; item.approx = true; }
+      else { noLoc++; return; }
+      list.push(item);
     });
     return { list: list, noLoc: noLoc };
+  }
+
+  // ---------- finding locations from an address (OpenStreetMap Nominatim) ----------
+  // Used when a row has an address or only a neighbourhood. Results are kept on the phone,
+  // so each address is looked up only once.
+  var DEFAULT_REGION = "İstanbul";   // added after a neighbourhood written on its own
+  var geoCache = {};
+  try { geoCache = JSON.parse(store("geo") || "{}") || {}; } catch (e) { geoCache = {}; }
+  function saveGeo() { try { store("geo", JSON.stringify(geoCache)); } catch (e) {} }
+  function geocode(q) {
+    var key = q.toLocaleLowerCase("tr");
+    if (geoCache[key]) return Promise.resolve(geoCache[key]);
+    var url = "https://nominatim.openstreetmap.org/search?format=json&limit=1&countrycodes=tr&accept-language=tr&q=" + encodeURIComponent(q);
+    return fetch(url).then(function (r) { return r.ok ? r.json() : []; }).then(function (j) {
+      var res = j && j[0] ? [parseFloat(j[0].lat), parseFloat(j[0].lon)] : null;
+      geoCache[key] = res || [0, 0, "yok"];   // remember misses too, so they are not retried every time
+      saveGeo();
+      return geoCache[key];
+    }).catch(function () { return null; });
+  }
+  // Spread listings that share the same neighbourhood point a little, so their tags do not sit on top of each other
+  function spread(item, idx) {
+    if (!item.approx) return;
+    var p = offset([item.lat, item.lon], 40 + (idx % 4) * 35, (idx * 137) % 360);
+    item.lat = p[0]; item.lon = p[1];
+  }
+  function locatePending(pending) {
+    var i = 0, found = 0, missed = 0;
+    function next() {
+      if (i >= pending.length) {
+        if (missed) toast(missed + " ilanın konumu bulunamadı. Tabloda Konum sütununa daha açık bir adres yaz (ör. “Caferağa, Kadıköy”).");
+        return;
+      }
+      var item = pending[i++];
+      var cached = !!geoCache[item.query.toLocaleLowerCase("tr")];
+      geocode(item.query).then(function (res) {
+        if (res && res[2] !== "yok") {
+          item.lat = res[0]; item.lon = res[1];
+          spread(item, i);
+          listings.push(item); found++;
+          if (sampleData) { sampleData = false; listings = listings.filter(function (l) { return !/^ornek-/.test(l.id); }); clearMarkers(); }
+          document.getElementById("dataChip").textContent = listings.length + " ilan";
+          document.getElementById("reseed").hidden = true;
+          render();
+        } else missed++;
+        setTimeout(next, cached ? 0 : 1100);   // the free map search allows about one lookup per second
+      });
+    }
+    next();
   }
 
   function useSamples() {
@@ -506,17 +560,25 @@ button:focus-visible { outline: 3px solid var(--me); outline-offset: 2px; }
     }).then(function (text) {
       if (/^\s*</.test(text)) throw new Error("not shared");   // got a sign-in page instead of CSV
       var res = rowsToListings(parseCSV(text));
+      var ready = res.list.filter(function (l) { return isFinite(l.lat); });
+      var pending = res.list.filter(function (l) { return !isFinite(l.lat); });
       if (!res.list.length) {
-        if (!quiet) toast(res.noLoc ? "Tablodaki ilanların konumu yok. Tabloda İlan Radarı → Konumları doldur'a bas." : "Tabloda henüz ilan yok. Şimdilik örnek ilanlar gösteriliyor.");
+        if (!quiet) toast(res.noLoc ? "Tablodaki ilanlarda Konum ya da Mahalle yok, haritaya konamadı." : "Tabloda henüz ilan yok. Şimdilik örnek ilanlar gösteriliyor.");
         useSamples(); return;
       }
-      listings = res.list;
-      sampleData = false;
       announced = {};
       clearMarkers();
-      document.getElementById("dataChip").textContent = listings.length + " ilan";
-      document.getElementById("reseed").hidden = true;
-      if (res.noLoc && !quiet) toast(res.noLoc + " ilanın konumu yok, haritada gösterilmiyor.");
+      if (ready.length) {
+        listings = ready;
+        sampleData = false;
+        document.getElementById("dataChip").textContent = listings.length + " ilan";
+        document.getElementById("reseed").hidden = true;
+      } else {
+        useSamples();   // shown until the first address is found
+        document.getElementById("dataChip").textContent = "Konumlar bulunuyor…";
+      }
+      if (res.noLoc && !quiet) toast(res.noLoc + " ilanda Konum ya da Mahalle yok, haritada gösterilmiyor.");
+      if (pending.length) locatePending(pending);
     }).catch(function () {
       if (!quiet) toast("Tabloya ulaşılamadı. Tablonun “bağlantıya sahip herkes görüntüleyebilir” olarak paylaşıldığından emin ol.");
       if (!listings.length || sampleData) useSamples();
@@ -531,6 +593,7 @@ button:focus-visible { outline: 3px solid var(--me); outline-offset: 2px; }
   function popupHtml(l) {
     var d = me ? Math.round(dist(me, [l.lat, l.lon])) + " m uzakta" : "";
     var meta = [l.mahalle, l.tarih].filter(Boolean).map(esc).join(" · ");
+    if (l.approx) meta += (meta ? "<br>" : "") + "Konum yaklaşık (mahalle)";
     return '<div class="pop"><div class="t">' + esc(l.tip || l.tur) + " · " + esc(l.oda) + (l.m2 ? " · " + esc(l.m2) + " m²" : "") + '</div>' +
       '<div class="p">' + esc(longPrice(l)) + '</div>' +
       '<div class="d">' + esc(l.baslik || "") + (meta ? "<br>" + meta : "") + (d ? "<br>" + d : "") + '</div>' +
